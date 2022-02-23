@@ -21,12 +21,14 @@ limitations under the License.
 #include <string>
 #include <utility>
 
+#include "absl/base/thread_annotations.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/compiler/xla/client/executable_build_options.h"
 #include "tensorflow/compiler/xla/client/xla_computation.h"
 #include "tensorflow/compiler/xla/layout.h"
 #include "tensorflow/compiler/xla/literal.h"
 #include "tensorflow/compiler/xla/pjrt/pjrt_client.h"
+#include "tensorflow/compiler/xla/pjrt/pjrt_event.h"
 #include "tensorflow/compiler/xla/pjrt/semaphore.h"
 #include "tensorflow/compiler/xla/pjrt/tracked_tfrt_cpu_device_buffer.h"
 #include "tensorflow/compiler/xla/pjrt/transpose.h"
@@ -468,9 +470,7 @@ class TfrtCpuBuffer final : public PjRtBuffer {
     }
   }
 
-  Status BlockHostUntilReady() override;
-
-  void OnReady(std::function<void(Status)> callback) override;
+  PjRtEvent<Status> GetEvent() override;
 
   bool IsOnCpu() const override { return true; }
 
@@ -538,6 +538,8 @@ class TfrtCpuBuffer final : public PjRtBuffer {
       ABSL_GUARDED_BY(mu_);
   // Count of holds on the buffer.
   std::array<int, ScopedHold::Type::kMaxValue> holds_ ABSL_GUARDED_BY(mu_);
+  // Cached definition event used for constructing PjRtEvents to wait on.
+  tfrt::AsyncValueRef<Status> definition_event_ ABSL_GUARDED_BY(mu_);
 };
 
 class TfrtCpuExecutable final : public PjRtExecutable {
