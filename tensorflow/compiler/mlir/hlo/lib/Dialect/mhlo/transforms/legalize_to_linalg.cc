@@ -1947,11 +1947,8 @@ struct DepthwiseConvOpConversion : public OpConversionPattern<mhlo::ConvOp> {
       mhlo::ConvOp op, OpAdaptor adaptor,
       ConversionPatternRewriter& rewriter) const override {
     if (op.batch_group_count() != 1) return failure();
-
-    if (op.padding() && !isSplatValue(*op.padding(), 0)) {
-      return rewriter.notifyMatchFailure(op,
-                                         "non-zero padding unsupported yet");
-    }
+    // Fall in normal convolution cases.
+    if (op.feature_group_count() == 1) return failure();
 
     if ((op.lhs_dilation() && !isSplatValue(*op.lhs_dilation(), 1))) {
       return rewriter.notifyMatchFailure(
@@ -2005,6 +2002,22 @@ struct DepthwiseConvOpConversion : public OpConversionPattern<mhlo::ConvOp> {
                                          "expected output has static shapes");
     }
 
+    auto zero_attr = rewriter.getZeroAttr(result_type.getElementType());
+
+    // Check if padding is zero or not. If it is not zero, we should pad the
+    // input.
+    DenseIntElementsAttr padding = op.paddingAttr();
+    if (padding && !isSplatValue(padding, 0)) {
+      SmallVector<int64_t, 4> pad(2, 0);
+
+      // Store the padding values in a vector.
+      getValuesFromIntAttribute(padding, pad);
+      pad.resize(pad.size() + 2, 0);
+      // Pad the given input using `zeroAttr` according to the low and high
+      // values in the `pad`.
+      input = applyPad(loc, input, pad, zero_attr, rewriter);
+    }
+
     auto filter_dims =
         llvm::to_vector<4>(op.rhs().getType().cast<ShapedType>().getShape());
 
@@ -2023,7 +2036,6 @@ struct DepthwiseConvOpConversion : public OpConversionPattern<mhlo::ConvOp> {
 
       Value init_tensor = rewriter.create<linalg::InitTensorOp>(
           loc, reshaped_output_dims, result_type.getElementType());
-      auto zero_attr = rewriter.getZeroAttr(result_type.getElementType());
       Value zero = rewriter.create<arith::ConstantOp>(loc, zero_attr);
       Value zero_tensor =
           rewriter.create<linalg::FillOp>(loc, zero, init_tensor).getResult(0);
@@ -2048,7 +2060,6 @@ struct DepthwiseConvOpConversion : public OpConversionPattern<mhlo::ConvOp> {
       // For cases where channel multiplier == 1
       Value init_tensor = rewriter.create<linalg::InitTensorOp>(
           loc, result_type.getShape(), result_type.getElementType());
-      auto zero_attr = rewriter.getZeroAttr(result_type.getElementType());
       Value zero = rewriter.create<arith::ConstantOp>(loc, zero_attr);
       Value zero_tensor =
           rewriter.create<linalg::FillOp>(loc, zero, init_tensor).getResult(0);
